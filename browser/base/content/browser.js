@@ -1701,14 +1701,16 @@ function delayedStartup(isLoadingBlank, mustLoadSidebar) {
 #endif
   }
 
-  // Enable Scratchpad in the UI, if the preference allows this.
   let scratchpadEnabled = gPrefService.getBoolPref(Scratchpad.prefEnabledName);
   if (scratchpadEnabled) {
+    // Enable Scratchpad in the UI, if the preference allows this.
     document.getElementById("menu_scratchpad").hidden = false;
     document.getElementById("Tools:Scratchpad").removeAttribute("disabled");
 #ifdef MENUBAR_CAN_AUTOHIDE
     document.getElementById("appmenu_scratchpad").hidden = false;
 #endif
+
+    Scratchpad.init();
   }
 
 #ifdef MENUBAR_CAN_AUTOHIDE
@@ -8702,13 +8704,14 @@ function toggleAddonBar() {
 
 var Scratchpad = {
   prefEnabledName: "devtools.scratchpad.enabled",
+  
+  init: function SP_init() {
+    Cu.import("resource:///modules/scratchpad-manager.jsm", this);
+    this.ScratchpadManager.init();
+  },
 
   openScratchpad: function SP_openScratchpad() {
-    const SCRATCHPAD_WINDOW_URL = "chrome://browser/content/scratchpad.xul";
-    const SCRATCHPAD_WINDOW_FEATURES = "chrome,titlebar,toolbar,centerscreen,resizable,dialog=no";
-
-    return Services.ww.openWindow(null, SCRATCHPAD_WINDOW_URL, "_blank",
-                                  SCRATCHPAD_WINDOW_FEATURES, null);
+    this.ScratchpadManager.openScratchpad();
   },
 };
 
