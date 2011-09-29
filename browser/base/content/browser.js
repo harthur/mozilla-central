@@ -1701,14 +1701,16 @@ function delayedStartup(isLoadingBlank, mustLoadSidebar) {
 #endif
   }
 
-  // Enable Scratchpad in the UI, if the preference allows this.
   let scratchpadEnabled = gPrefService.getBoolPref(Scratchpad.prefEnabledName);
   if (scratchpadEnabled) {
+    // Enable Scratchpad in the UI, if the preference allows this.
     document.getElementById("menu_scratchpad").hidden = false;
     document.getElementById("Tools:Scratchpad").removeAttribute("disabled");
 #ifdef MENUBAR_CAN_AUTOHIDE
     document.getElementById("appmenu_scratchpad").hidden = false;
 #endif
+
+    Scratchpad.init();
   }
 
 #ifdef MENUBAR_CAN_AUTOHIDE
@@ -8702,13 +8704,72 @@ function toggleAddonBar() {
 
 var Scratchpad = {
   prefEnabledName: "devtools.scratchpad.enabled",
+  
+  readFile: function(file) {
+    let inputStream = Components.classes["@mozilla.org/network/file-input-stream;1"]
+        .createInstance(Components.interfaces.nsIFileInputStream);
+    let mask = parseInt('0666', 8);
+    inputStream.init(file, 0x01 | 0x08, mask, 0); // read, create
+    
+    let cstream = Components.classes["@mozilla.org/intl/converter-input-stream;1"]
+        .createInstance(Components.interfaces.nsIConverterInputStream);
+        
+    let fileSize = inputStream.available();
+    cstream.init(inputStream, "UTF-8", fileSize,
+      Components.interfaces.nsIConverterInputStream.DEFAULT_REPLACEMENT_CHARACTER);
 
-  openScratchpad: function SP_openScratchpad() {
+    let data = {};
+    cstream.readString(fileSize, data);
+    cstream.close();
+
+    return data.value;
+  },
+  
+  writeFile: function(file, data) {
+    // Initialize output stream.
+    let outputStream = Components.classes["@mozilla.org/network/file-output-stream;1"]
+        .createInstance(Components.interfaces.nsIFileOutputStream);
+    let mask = parseInt('0666', 8);
+    outputStream.init(file, 0x02 | 0x08 | 0x20, mask, 0); // write, create, truncate
+
+    outputStream.write(data, data.length);
+    outputStream.close();
+  },
+  
+  init: function SP_init() {
+    const SCRATCHPAD_SESSION_FILE = "scratchpads.js";
+    
+    let sessionFile = Services.dirsvc.get("ProfD", Components.interfaces.nsIFile);
+    sessionFile.append(SCRATCHPAD_SESSION_FILE);
+    if (!sessionFile.exists()) {
+        sessionFile.create(Components.interfaces.nsIFile.NORMAL_FILE_TYPE, 0666);
+    }
+    let json = this.readFile(sessionFile);
+
+    let sessions = JSON.parse(json || "[]");
+    if (sessions.length) {
+      sessions.forEach(function(session) {
+        this.openScratchpad(session);
+      }, this);
+
+      // only the first opened window should restore scratchpads
+      this.writeFile(sessionFile, "[]");
+    }
+  },
+
+  openScratchpad: function SP_openScratchpad(session) {
     const SCRATCHPAD_WINDOW_URL = "chrome://browser/content/scratchpad.xul";
     const SCRATCHPAD_WINDOW_FEATURES = "chrome,titlebar,toolbar,centerscreen,resizable,dialog=no";
-
+    
+    let params = null;
+    if (session) {
+      params = Components.classes["@mozilla.org/embedcomp/dialogparam;1"]
+                             .createInstance(Components.interfaces.nsIDialogParamBlock);
+      params.SetNumberStrings(1);
+      params.SetString(0, JSON.stringify(session));
+    }
     return Services.ww.openWindow(null, SCRATCHPAD_WINDOW_URL, "_blank",
-                                  SCRATCHPAD_WINDOW_FEATURES, null);
+                                  SCRATCHPAD_WINDOW_FEATURES, params);
   },
 };
 

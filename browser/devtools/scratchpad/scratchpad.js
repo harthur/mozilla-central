@@ -65,6 +65,7 @@ const SCRATCHPAD_CONTEXT_BROWSER = 2;
 const SCRATCHPAD_WINDOW_URL = "chrome://browser/content/scratchpad.xul";
 const SCRATCHPAD_L10N = "chrome://browser/locale/scratchpad.properties";
 const SCRATCHPAD_WINDOW_FEATURES = "chrome,titlebar,toolbar,centerscreen,resizable,dialog=no";
+const SCRATCHPAD_SESSION_FILE = "scratchpads.js";
 const DEVTOOLS_CHROME_ENABLED = "devtools.chrome.enabled";
 
 /**
@@ -130,6 +131,19 @@ var Scratchpad = {
   setText: function SP_setText(aText, aStart, aEnd)
   {
     this.editor.setText(aText, aStart, aEnd);
+  },
+  
+  setFilename: function SP_setFilename(aFilename)
+  {
+    document.title = this.filename = aFilename;
+  },
+  
+  getState: function SP_getState()
+  {
+    return {
+      filename: this.filename,
+      text: this.getText()
+    };
   },
 
   /**
@@ -541,7 +555,7 @@ var Scratchpad = {
             Ci.nsIFilePicker.modeOpen);
     fp.defaultString = "";
     if (fp.show() != Ci.nsIFilePicker.returnCancel) {
-      document.title = this.filename = fp.file.path;
+      this.setFilename(fp.file.path);
       this.importFromFile(fp.file);
     }
   },
@@ -670,16 +684,28 @@ var Scratchpad = {
       chromeContextCommand.removeAttribute("disabled");
     }
 
+    let initialText = this.strings.GetStringFromName("scratchpadIntro");
+    if ("arguments" in window && 
+         window.arguments[0] instanceof Components.interfaces.nsIDialogParamBlock) {
+      let session = JSON.parse(window.arguments[0].GetString(0));
+      initialText = session.text;
+      if (session.filename) {
+        this.setFilename(session.filename);
+      }
+    }
+
     this.editor = new SourceEditor();
 
     let config = {
       mode: SourceEditor.MODES.JAVASCRIPT,
       showLineNumbers: true,
-      placeholderText: this.strings.GetStringFromName("scratchpadIntro"),
+      placeholderText: initialText,
     };
 
     let editorPlaceholder = document.getElementById("scratchpad-editor");
     this.editor.init(editorPlaceholder, config, this.onEditorLoad.bind(this));
+
+    ShutdownObserver.init();
   },
 
   /**
@@ -771,6 +797,8 @@ var Scratchpad = {
                                     this.onContextMenu);
     this.editor.destroy();
     this.editor = null;
+    
+    ShutdownObserver.uninit();
   },
 };
 
@@ -780,3 +808,73 @@ XPCOMUtils.defineLazyGetter(Scratchpad, "strings", function () {
 
 addEventListener("DOMContentLoaded", Scratchpad.onLoad.bind(Scratchpad), false);
 addEventListener("unload", Scratchpad.onUnload.bind(Scratchpad), false);
+
+let ShutdownObserver = {
+  init: function SDO_init()
+  {
+    Services.obs.addObserver(this, "quit-application-granted", false);
+  },
+  
+  readFile: function(file) {
+    let inputStream = Components.classes["@mozilla.org/network/file-input-stream;1"]
+        .createInstance(Components.interfaces.nsIFileInputStream);
+    let mask = parseInt('0666', 8);
+    inputStream.init(file, 0x01 | 0x08, mask, 0); // read, create
+    
+    let cstream = Components.classes["@mozilla.org/intl/converter-input-stream;1"]
+        .createInstance(Components.interfaces.nsIConverterInputStream);
+        
+    let fileSize = inputStream.available();
+    cstream.init(inputStream, "UTF-8", fileSize,
+      Components.interfaces.nsIConverterInputStream.DEFAULT_REPLACEMENT_CHARACTER);
+
+    let data = {};
+    cstream.readString(fileSize, data);
+    cstream.close();
+
+    return data.value;
+  },
+  
+  writeFile: function(file, data) {
+    // Initialize output stream.
+    let outputStream = Components.classes["@mozilla.org/network/file-output-stream;1"]
+        .createInstance(Components.interfaces.nsIFileOutputStream);
+    let mask = parseInt('0666', 8);
+    outputStream.init(file, 0x02 | 0x08 | 0x20, mask, 0); // write, create, truncate
+
+    outputStream.write(data, data.length);
+    outputStream.close();
+  },
+
+  observe: function SDO_observe(aMessage, aTopic, aData)
+  {
+    if (aTopic == "quit-application-granted") {
+      try {
+        
+      const SCRATCHPAD_SESSION_FILE = "scratchpads.js";
+
+      var sessionFile = Services.dirsvc.get("ProfD", Components.interfaces.nsIFile);
+      sessionFile.append(SCRATCHPAD_SESSION_FILE);
+      let mask = parseInt('0666', 8);
+      
+      if (!sessionFile.exists()) {
+          sessionFile.create(Components.interfaces.nsIFile.NORMAL_FILE_TYPE, mask);
+      }
+      var json = this.readFile(sessionFile) || "[]";
+      let sessions = JSON.parse(json);
+
+      sessions.push(Scratchpad.getState());
+      
+      this.writeFile(sessionFile, JSON.stringify(sessions));
+      } catch(e) {
+        dump(e);
+      }
+      this.uninit();
+    }
+  },
+
+  uninit: function SDO_uninit()
+  {
+    Services.obs.removeObserver(this, "quit-application-granted");
+  }
+};
