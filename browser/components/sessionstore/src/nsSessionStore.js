@@ -134,6 +134,7 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 // debug.js adds NS_ASSERT. cf. bug 669196
 Cu.import("resource://gre/modules/debug.js");
+Cu.import("resource:///modules/devtools/scratchpad-manager.jsm");
 
 XPCOMUtils.defineLazyGetter(this, "NetUtil", function() {
   Cu.import("resource://gre/modules/NetUtil.jsm");
@@ -2481,7 +2482,15 @@ SessionStoreService.prototype = {
     if (ix != -1 && total[ix] && total[ix].sizemode == "minimized")
       ix = -1;
 
-    return { windows: total, selectedWindow: ix + 1, _closedWindows: lastClosedWindowsCopy };
+    // save open scratchpad window states too
+    var scratchpads = ScratchpadManager.getSessionState();
+
+    return {
+      windows: total,
+      selectedWindow: ix + 1,
+      _closedWindows: lastClosedWindowsCopy,
+      scratchpads: scratchpads
+    };
   },
 
   /**

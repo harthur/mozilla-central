@@ -59,7 +59,7 @@ Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/NetUtil.jsm");
 Cu.import("resource:///modules/PropertyPanel.jsm");
 Cu.import("resource:///modules/source-editor.jsm");
-Cu.import("resource:///modules/scratchpad-manager.jsm");
+Cu.import("resource:///modules/devtools/scratchpad-manager.jsm");
 
 
 const SCRATCHPAD_CONTEXT_CONTENT = 1;
@@ -827,11 +827,6 @@ var Scratchpad = {
                                     this.onContextMenu);
     this.editor.destroy();
     this.editor = null;
-    
-    if (!ScratchpadManager.appQuitting) {
-      // only remove from session if user is closing the window.
-      ScratchpadManager.removeState(window.__sid);
-    }
   },
 };
 

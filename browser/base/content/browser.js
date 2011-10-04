@@ -8706,13 +8706,12 @@ var Scratchpad = {
   prefEnabledName: "devtools.scratchpad.enabled",
   
   init: function SP_init() {
-    Cu.import("resource:///modules/scratchpad-manager.jsm", this);
-    this.ScratchpadManager.init();
+    Cu.import("resource:///modules/devtools/scratchpad-manager.jsm", this);
   },
 
   openScratchpad: function SP_openScratchpad() {
-    this.ScratchpadManager.openScratchpad();
-  },
+    return this.ScratchpadManager.openScratchpad();
+  }
 };
 
 
