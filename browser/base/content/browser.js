@@ -8711,7 +8711,7 @@ var Scratchpad = {
   },
 
   openScratchpad: function SP_openScratchpad() {
-    this.ScratchpadManager.openScratchpad();
+    return this.ScratchpadManager.openScratchpad();
   },
 };
 

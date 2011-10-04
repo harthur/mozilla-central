@@ -827,11 +827,6 @@ var Scratchpad = {
                                     this.onContextMenu);
     this.editor.destroy();
     this.editor = null;
-    
-    if (!ScratchpadManager.appQuitting) {
-      // only remove from session if user is closing the window.
-      ScratchpadManager.removeState(window.__sid);
-    }
   },
 };
 

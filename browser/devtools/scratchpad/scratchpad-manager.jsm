@@ -54,22 +54,18 @@ Cu.import("resource://gre/modules/NetUtil.jsm");
 
 /**
  * The ScratchpadManager object opens new Scratchpad windows and manages the state
- * of open scratchpads for session restore.
+ * of open scratchpads for session restore. There's only one ScratchpadManager in
+ * the life of the browser.
  */
 var ScratchpadManager = { 
   /**
    * Whether the manager has been initialized yet.
    */ 
   _initialized: false,
-  
-  /**
-   * States of the open scratchpads.
-   */
-  _scratchpads: {},
 
   /**
    * Initialize the scratchpad manager if it hasn't already been initalized.
-   * Restores the previous browser session's scratchpad windows
+   * Restore the previous browser session's scratchpad windows
    */
   init: function SPM_init()
   {
@@ -80,7 +76,7 @@ var ScratchpadManager = {
     this._sessionFile = Services.dirsvc.get("ProfD", Ci.nsILocalFile);
     this._sessionFile.append(SCRATCHPAD_SESSION_FILE);
     if (this._sessionFile.exists()) {
-      this._restoreSession();
+      this.restoreSession();
     }
 
     this._initialized = true;
@@ -88,16 +84,25 @@ var ScratchpadManager = {
   
   /**
    * Restore scratchpad windows from the scratchpad session store file.
+   *
+   * @param function aCallback
+   *        Optional. Function called when session has been restored
    */
-  _restoreSession: function SPM_restoreSession()
+  restoreSession: function SPM_restoreSession(aCallback)
   {
-    var self = this;
+    let self = this;
     this._readFile(this._sessionFile, function(aStatus, aContent) {
       let states = JSON.parse(aContent || "[]");
+      let wins = [];
 
       states.forEach(function(state) {
-        this.openScratchpad(state);
+        let win = this.openScratchpad(state)
+        wins.push(win);
       }, self);
+      
+      if (aCallback) {
+        aCallback.call(self, wins);
+      }
     });
   },
 
@@ -119,75 +124,40 @@ var ScratchpadManager = {
     }
     let win = Services.ww.openWindow(null, SCRATCHPAD_WINDOW_URL, "_blank",
                                      SCRATCHPAD_WINDOW_FEATURES, params);
-    // give the scratchpad window an id for uniquifying the scratchpad
-    // states in the session object.
-    win.__sid = "scratchpad_" + Date.now();
     
     // Only add shutdown observer if we've opened a scratchpad window
     ShutdownObserver.init();
+    
+    return win;
   },
 
-  /**
-   * Save a scratchpad's state to the session store. Called by a
-   * scratchpad when it wants to save its state. Right now this
-   * is only on shutdown.
-   *
-   * @param string aSid
-   *        The id of the scratchpad window in the session object.
-   *
-   * @param object aState
-   *        The state of the scratchpad, an object
-   *        with properties filename, text, and executionContext.
-   */
-  saveState: function SPM_saveState(aSid, aState)
-  {
-    this._scratchpads[aSid] = aState;
-    this.saveSession();
-  },
-  
-  /**
-   * Remove a scratchpad state from the session store. Called by
-   * a scratchpad when its window is closed by the user.
-   *
-   * @param string aId
-   *        The id of the scratchpad window in the session object.
-   */
-  removeState: function SPM_removeState(aSid)
-  {
-    delete this._scratchpads[aSid];
-    this.saveSession();
-  },
-  
   /**
    * Iterate through open scratchpad windows and save their states
    * to the session store.
+   *
+   * @param function aCallback
+   *        Optional. Function called when session has been saved.
    */
-  saveOpenWindows: function SPM_saveOpenWindows() {
+  saveOpenWindows: function SPM_saveOpenWindows(aCallback)
+  {
+    let session = [];
+
     let enumerator = Services.wm.getEnumerator("devtools:scratchpad");
     while (enumerator.hasMoreElements()) {
       let win = enumerator.getNext();
-      if (win.__sid && !win.closed) {
-        this._scratchpads[win.__sid] = win.Scratchpad.getState();
+      if (!win.closed) {
+        session.push(win.Scratchpad.getState());
       }
-    }
-    
-    this.saveSession();
-  },
-
-  /**
-   * Save the session object to the session file.
-   */
-  saveSession: function SPM_saveSession()
-  {
-    let json = [];
-    for (let sid in this._scratchpads) {
-      json.push(this._scratchpads[sid]);
     }
 
     if (!this._sessionFile.exists()) {
+      if (!session.length) {
+        // don't bother creating a session file if it'll be empty
+        return;
+      }
       this._sessionFile.create(Ci.nsIFile.NORMAL_FILE_TYPE, PERM_MASK);
     }    
-    this._writeFile(this._sessionFile, JSON.stringify(json));
+    this._writeFile(this._sessionFile, JSON.stringify(session), aCallback);
   },
 
   /**
@@ -225,27 +195,28 @@ var ScratchpadManager = {
    * @param function aCallback
    *        Optional. Function called with the return code of the write operation.
    */
-  _writeFile: function SPM_writeFile(aFile, aData, aCallback) {
+  _writeFile: function SPM_writeFile(aFile, aData, aCallback)
+  {
     // Initialize the file output stream.
-    var ostream = Cc["@mozilla.org/network/safe-file-output-stream;1"].
+    let ostream = Cc["@mozilla.org/network/safe-file-output-stream;1"].
                   createInstance(Ci.nsIFileOutputStream);
-    ostream.init(aFile, 0x02 | 0x08 | 0x20, PERM_MASK, ostream.DEFER_OPEN);
+    let flags = 0x02 | 0x08 | 0x20 // write, create, truncate
+    ostream.init(aFile, flags, PERM_MASK, ostream.DEFER_OPEN);
 
     // Obtain a converter to convert our data to a UTF-8 encoded input stream.
-    var converter = Cc["@mozilla.org/intl/scriptableunicodeconverter"].
+    let converter = Cc["@mozilla.org/intl/scriptableunicodeconverter"].
                     createInstance(Ci.nsIScriptableUnicodeConverter);
     converter.charset = "UTF-8";
 
     // Asynchronously copy the data to the file.
-    var istream = converter.convertToInputStream(aData);
-    var self = this;
+    let istream = converter.convertToInputStream(aData);
+    let self = this;
     NetUtil.asyncCopy(istream, ostream, function(rc) {
       if (aCallback) {
-        aCallback.call(self, rc)
+        aCallback.call(self, rc);
       }
     });
   }
-
 };
 
 
@@ -261,15 +232,13 @@ var ShutdownObserver = {
     if (this._initialized) {
       return;
     }
-
     Services.obs.addObserver(this, "quit-application-granted", false);
-    this.initialized = true;
+    this._initialized = true;
   },
 
   observe: function SDO_observe(aMessage, aTopic, aData)
   {
     if (aTopic == "quit-application-granted") {
-      ScratchpadManager.appQuitting = true;
       ScratchpadManager.saveOpenWindows();
       this.uninit();
     }
