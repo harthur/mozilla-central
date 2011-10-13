@@ -44,14 +44,14 @@
 #include "xpcprivate.h"
 #include "nsCRT.h"
 #include "XPCWrapper.h"
-#include "nsWrapperCache.h"
+#include "nsWrapperCacheInlines.h"
 #include "xpclog.h"
-#include "jstl.h"
 #include "nsINode.h"
 #include "xpcquickstubs.h"
 #include "jsproxy.h"
 #include "AccessCheck.h"
 #include "WrapperFactory.h"
+#include "dombindings.h"
 
 bool
 xpc_OkToHandOutWrapper(nsWrapperCache *cache)
@@ -59,10 +59,10 @@ xpc_OkToHandOutWrapper(nsWrapperCache *cache)
     NS_ABORT_IF_FALSE(cache->GetWrapper(), "Must have wrapper");
     NS_ABORT_IF_FALSE(cache->IsProxy() || IS_WN_WRAPPER(cache->GetWrapper()),
                       "Must have proxy or XPCWrappedNative wrapper");
-    return
-        !cache->IsProxy() &&
+    return cache->IsProxy() ?
+        mozilla::dom::binding::instanceIsProxy(cache->GetWrapper()) :
         !static_cast<XPCWrappedNative*>(xpc_GetJSPrivate(cache->GetWrapper()))->
-                    NeedsSOW();
+            NeedsSOW();
 }
 
 /***************************************************************************/
@@ -531,8 +531,8 @@ XPCWrappedNative::GetNewOrUsed(XPCCallContext& ccx,
             nsCOMPtr<nsIXPConnectWrappedJS> wrappedjs(do_QueryInterface(Object));
             JSObject *obj;
             wrappedjs->GetJSObject(&obj);
-            if(xpc::AccessCheck::isChrome(obj->compartment()) &&
-               !xpc::AccessCheck::isChrome(Scope->GetGlobalJSObject()->compartment()))
+            if(xpc::AccessCheck::isChrome(js::GetObjectCompartment(obj)) &&
+               !xpc::AccessCheck::isChrome(js::GetObjectCompartment(Scope->GetGlobalJSObject())))
             {
                 needsCOW = JS_TRUE;
             }
@@ -764,7 +764,7 @@ XPCWrappedNative::Morph(XPCCallContext& ccx,
 
     NS_ADDREF(wrapper);
 
-    NS_ASSERTION(!xpc::WrapperFactory::IsXrayWrapper(existingJSObject->getParent()),
+    NS_ASSERTION(!xpc::WrapperFactory::IsXrayWrapper(js::GetObjectParent(existingJSObject)),
                  "Xray wrapper being used to parent XPCWrappedNative?");
 
     JSAutoEnterCompartment ac;
@@ -1139,7 +1139,7 @@ XPCWrappedNative::Init(XPCCallContext& ccx,
         // JS class without the proper global flags. Notice that here and fix
         // the problem.
         if(!(jsclazz->flags & JSCLASS_IS_GLOBAL))
-            jsclazz->flags |= JSCLASS_GLOBAL_FLAGS;
+            jsclazz->flags |= XPCONNECT_GLOBAL_FLAGS;
     }
     else
         NS_ASSERTION(!(jsclazz->flags & JSCLASS_IS_GLOBAL),
@@ -1495,8 +1495,8 @@ XPCWrappedNative::ReparentWrapperIfFound(XPCCallContext& ccx,
         return NS_OK;
     }
 
-    bool crosscompartment = aOldScope->GetGlobalJSObject()->compartment() !=
-                            aNewScope->GetGlobalJSObject()->compartment();
+    bool crosscompartment = js::GetObjectCompartment(aOldScope->GetGlobalJSObject()) !=
+                            js::GetObjectCompartment(aNewScope->GetGlobalJSObject());
 #ifdef DEBUG
     if(crosscompartment)
     {
@@ -1593,8 +1593,9 @@ XPCWrappedNative::ReparentWrapperIfFound(XPCCallContext& ccx,
 
             if(crosscompartment)
             {
-                JSObject *newobj = flat->clone(ccx, newProto->GetJSProtoObject(),
-                                               aNewParent);
+                JSObject *newobj = JS_CloneObject(ccx, flat,
+                                                  newProto->GetJSProtoObject(),
+                                                  aNewParent);
                 if(!newobj)
                     return NS_ERROR_FAILURE;
 
@@ -1602,7 +1603,7 @@ XPCWrappedNative::ReparentWrapperIfFound(XPCCallContext& ccx,
 
                 JSObject *propertyHolder =
                     JS_NewObjectWithGivenProto(ccx, NULL, NULL, aNewParent);
-                if(!propertyHolder || !propertyHolder->copyPropertiesFrom(ccx, flat))
+                if(!propertyHolder || !JS_CopyPropertiesFrom(ccx, propertyHolder, flat))
                     return NS_ERROR_OUT_OF_MEMORY;
 
                 JSObject *ww = wrapper->GetWrapper();
@@ -1640,13 +1641,13 @@ XPCWrappedNative::ReparentWrapperIfFound(XPCCallContext& ccx,
                 wrapper->mFlatJSObject = flat;
                 if(cache)
                     cache->SetWrapper(flat);
-                if (!flat->copyPropertiesFrom(ccx, propertyHolder))
+                if (!JS_CopyPropertiesFrom(ccx, flat, propertyHolder))
                     return NS_ERROR_FAILURE;
             }
             else
             {
                 if(wrapper->HasProto() &&
-                   flat->getProto() == oldProto->GetJSProtoObject())
+                   js::GetObjectProto(flat) == oldProto->GetJSProtoObject())
                 {
                     if(!JS_SetPrototype(ccx, flat, newProto->GetJSProtoObject()))
                     {
@@ -1727,16 +1728,16 @@ XPCWrappedNative::GetWrappedNativeOfJSObject(JSContext* cx,
 
     if(funobj)
     {
-        JSObject* funObjParent = funobj->getParent()->unwrap();
-        OBJ_TO_INNER_OBJECT(cx, funObjParent);
+        JSObject* funObjParent = js::UnwrapObject(js::GetObjectParent(funobj));
+        funObjParent = JS_ObjectToInnerObject(cx, funObjParent);
         NS_ASSERTION(funObjParent, "funobj has no parent");
 
-        js::Class* funObjParentClass = funObjParent->getClass();
+        js::Class* funObjParentClass = js::GetObjectClass(funObjParent);
 
         if(IS_PROTO_CLASS(funObjParentClass))
         {
-            NS_ASSERTION(funObjParent->getParent(), "funobj's parent (proto) is global");
-            proto = (XPCWrappedNativeProto*) funObjParent->getPrivate();
+            NS_ASSERTION(js::GetObjectParent(funObjParent), "funobj's parent (proto) is global");
+            proto = (XPCWrappedNativeProto*) js::GetObjectPrivate(funObjParent);
             if(proto)
                 protoClassInfo = proto->GetClassInfo();
         }
@@ -1747,7 +1748,7 @@ XPCWrappedNative::GetWrappedNativeOfJSObject(JSContext* cx,
         }
         else if(IS_TEAROFF_CLASS(funObjParentClass))
         {
-            NS_ASSERTION(funObjParent->getParent(), "funobj's parent (tearoff) is global");
+            NS_ASSERTION(js::GetObjectParent(funObjParent), "funobj's parent (tearoff) is global");
             cur = funObjParent;
             goto return_tearoff;
         }
@@ -1759,18 +1760,18 @@ XPCWrappedNative::GetWrappedNativeOfJSObject(JSContext* cx,
     }
 
   restart:
-    for(cur = obj; cur; cur = cur->getProto())
+    for(cur = obj; cur; cur = js::GetObjectProto(cur))
     {
         // this is on two lines to make the compiler happy given the goto.
         js::Class* clazz;
-        clazz = cur->getClass();
+        clazz = js::GetObjectClass(cur);
 
         if(IS_WRAPPER_CLASS(clazz))
         {
 return_wrapper:
             JSBool isWN = IS_WN_WRAPPER_OBJECT(cur);
             XPCWrappedNative* wrapper =
-                isWN ? (XPCWrappedNative*) cur->getPrivate() : nsnull;
+                isWN ? (XPCWrappedNative*) js::GetObjectPrivate(cur) : nsnull;
             if(proto)
             {
                 XPCWrappedNativeProto* wrapper_proto =
@@ -1789,7 +1790,7 @@ return_wrapper:
         {
 return_tearoff:
             XPCWrappedNative* wrapper =
-                (XPCWrappedNative*) cur->getParent()->getPrivate();
+                (XPCWrappedNative*) js::GetObjectPrivate(js::GetObjectParent(cur));
             if(proto && proto != wrapper->GetProto() &&
                (proto->GetScope() != wrapper->GetScope() ||
                 !protoClassInfo || !wrapper->GetProto() ||
@@ -1797,7 +1798,7 @@ return_tearoff:
                 continue;
             if(pobj2)
                 *pobj2 = nsnull;
-            XPCWrappedNativeTearOff* to = (XPCWrappedNativeTearOff*) cur->getPrivate();
+            XPCWrappedNativeTearOff* to = (XPCWrappedNativeTearOff*) js::GetObjectPrivate(cur);
             if(!to)
                 return nsnull;
             if(pTearOff)
@@ -2774,7 +2775,7 @@ CallMethodHelper::InitializeDispatchParams()
     {
         nsXPTCVariant* dp = &mDispatchParams[mOptArgcIndex];
         dp->type = nsXPTType::T_U8;
-        dp->val.u8 = mArgc - requiredArgs;
+        dp->val.u8 = NS_MIN<PRUint32>(mArgc, paramCount) - requiredArgs;
     }
 
     return JS_TRUE;
@@ -2978,8 +2979,8 @@ CallMethodHelper::ConvertDependentParams()
 
             if((datum_type.IsPointer() &&
                 (datum_type.TagPart() == nsXPTType::T_IID ||
-                 datum_type.TagPart() == nsXPTType::T_PSTRING_SIZE_IS) ||
-                 datum_type.TagPart() == nsXPTType::T_PWSTRING_SIZE_IS) ||
+                 datum_type.TagPart() == nsXPTType::T_PSTRING_SIZE_IS ||
+                 datum_type.TagPart() == nsXPTType::T_PWSTRING_SIZE_IS)) ||
                (isArray && datum_type.TagPart() == nsXPTType::T_CHAR_STR))
             {
                 dp->SetValNeedsCleanup();
@@ -3947,7 +3948,6 @@ ConstructProxyObject(XPCCallContext &ccx,
 
     nsWrapperCache *cache = aHelper.GetWrapperCache();
     JSObject *flat = cache->GetWrapper();
-    NS_ASSERTION(flat, "PreCreate is supposed to create the wrapper");
     return flat;
 }
 
@@ -3987,7 +3987,7 @@ ConstructSlimWrapper(XPCCallContext &ccx,
         return JS_FALSE;
     }
 
-    if(ccx.GetJSContext()->compartment != parent->compartment())
+    if(ccx.GetJSContext()->compartment != js::GetObjectCompartment(parent))
     {
         SLIM_LOG_NOT_CREATED(ccx, identityObj, "wrong compartment");
 

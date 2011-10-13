@@ -46,10 +46,9 @@
 #include "prcvar.h"
 #include "jsapi.h"
 #include "jscntxt.h"
-#include "jshashtable.h"
+#include "jsdbgapi.h"
 #include "jsstdint.h"
 #include "jslock.h"
-#include "jsvector.h"
 #include "jsworkers.h"
 
 extern size_t gMaxStackSize;

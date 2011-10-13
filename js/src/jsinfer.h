@@ -44,11 +44,11 @@
 
 #include "jsalloc.h"
 #include "jscell.h"
-#include "jstl.h"
+#include "jsfriendapi.h"
 #include "jsprvtd.h"
-#include "jshashtable.h"
 
 #include "ds/LifoAlloc.h"
+#include "js/HashTable.h"
 
 namespace js {
 namespace types {
@@ -865,6 +865,10 @@ struct TypeObject : gc::Cell
   private:
     inline uint32 basePropertyCount() const;
     inline void setBasePropertyCount(uint32 count);
+
+    static void staticAsserts() {
+        JS_STATIC_ASSERT(offsetof(TypeObject, proto) == offsetof(js::shadow::TypeObject, proto));
+    }
 };
 
 /* Global singleton for the generic type of objects with no prototype. */

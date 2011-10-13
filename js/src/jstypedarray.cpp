@@ -58,8 +58,6 @@
 #include "jsnum.h"
 #include "jsobj.h"
 #include "jsstaticcheck.h"
-#include "jsbit.h"
-#include "jsvector.h"
 #include "jstypedarray.h"
 #include "jsutil.h"
 
@@ -1386,7 +1384,7 @@ class TypedArrayTemplate
         CallArgs args = CallArgsFromVp(argc, vp);
 
         bool ok;
-        JSObject *obj = NonGenericMethodGuard(cx, args, fastClass(), &ok);
+        JSObject *obj = NonGenericMethodGuard(cx, args, fun_subarray, fastClass(), &ok);
         if (!obj)
             return ok;
 
@@ -1439,7 +1437,7 @@ class TypedArrayTemplate
         CallArgs args = CallArgsFromVp(argc, vp);
 
         bool ok;
-        JSObject *obj = NonGenericMethodGuard(cx, args, fastClass(), &ok);
+        JSObject *obj = NonGenericMethodGuard(cx, args, fun_set, fastClass(), &ok);
         if (!obj)
             return ok;
 

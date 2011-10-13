@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=2 et sw=2 tw=80: */
+/* vim: set ft=javascript ts=2 et sw=2 tw=80: */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -290,10 +290,14 @@ Highlighter.prototype = {
     closeButton.id = "highlighter-close-button";
     closeButton.appendChild(this.chromeDoc.createElement("image"));
 
-    closeButton.addEventListener("click",
-      this.IUI.closeInspectorUI.bind(this.IUI), false);
+    let boundCloseEventHandler = this.IUI.closeInspectorUI.bind(this.IUI, false);
+
+    closeButton.addEventListener("click", boundCloseEventHandler, false);
 
     aParent.appendChild(closeButton);
+
+    this.boundCloseEventHandler = boundCloseEventHandler;
+    this.closeButton = closeButton;
   },
 
   /**
@@ -303,6 +307,11 @@ Highlighter.prototype = {
   {
     this.browser.removeEventListener("scroll", this, true);
     this.browser.removeEventListener("resize", this, true);
+    this.closeButton.removeEventListener("click", this.boundCloseEventHandler, false);
+    this.boundCloseEventHandler = null;
+    this.closeButton.parentNode.removeChild(this.closeButton);
+    this.closeButton = null;
+    this._contentRect = null;
     this._highlightRect = null;
     this._highlighting = false;
     this.veilTopBox = null;
@@ -337,7 +346,7 @@ Highlighter.prototype = {
   highlight: function Highlighter_highlight(aScroll)
   {
     // node is not set or node is not highlightable, bail
-    if (!this.node || !this.isNodeHighlightable()) {
+    if (!this.node || !this.isNodeHighlightable(this.node)) {
       return;
     }
 
@@ -439,28 +448,41 @@ Highlighter.prototype = {
    */
   highlightRectangle: function Highlighter_highlightRectangle(aRect)
   {
-    let oldRect = this._highlightRect;
+    let oldRect = this._contentRect;
 
     if (oldRect && aRect.top == oldRect.top && aRect.left == oldRect.left &&
         aRect.width == oldRect.width && aRect.height == oldRect.height) {
       return this._highlighting; // same rectangle
     }
 
-    if (aRect.left >= 0 && aRect.top >= 0 &&
-        aRect.width > 0 && aRect.height > 0) {
+    // get page zoom factor, if any
+    let zoom =
+      this.win.QueryInterface(Components.interfaces.nsIInterfaceRequestor)
+      .getInterface(Components.interfaces.nsIDOMWindowUtils)
+      .screenPixelsPerCSSPixel;
+
+    // adjust rect for zoom scaling
+    let aRectScaled = {};
+    for (let prop in aRect) {
+      aRectScaled[prop] = aRect[prop] * zoom;
+    }
+
+    if (aRectScaled.left >= 0 && aRectScaled.top >= 0 &&
+        aRectScaled.width > 0 && aRectScaled.height > 0) {
       // The bottom div and the right div are flexibles (flex=1).
       // We don't need to resize them.
-      this.veilTopBox.style.height = aRect.top + "px";
-      this.veilLeftBox.style.width = aRect.left + "px";
-      this.veilMiddleBox.style.height = aRect.height + "px";
-      this.veilTransparentBox.style.width = aRect.width + "px";
+      this.veilTopBox.style.height = aRectScaled.top + "px";
+      this.veilLeftBox.style.width = aRectScaled.left + "px";
+      this.veilMiddleBox.style.height = aRectScaled.height + "px";
+      this.veilTransparentBox.style.width = aRectScaled.width + "px";
 
       this._highlighting = true;
     } else {
       this.unhighlight();
     }
 
-    this._highlightRect = aRect;
+    this._contentRect = aRect; // save orig (non-scaled) rect
+    this._highlightRect = aRectScaled; // and save the scaled rect.
 
     return this._highlighting;
   },
@@ -588,18 +610,18 @@ Highlighter.prototype = {
   get highlitNode()
   {
     // Not highlighting? Bail.
-    if (!this._highlighting || !this._highlightRect) {
+    if (!this._highlighting || !this._contentRect) {
       return null;
     }
 
     let a = {
-      x: this._highlightRect.left,
-      y: this._highlightRect.top
+      x: this._contentRect.left,
+      y: this._contentRect.top
     };
 
     let b = {
-      x: a.x + this._highlightRect.width,
-      y: a.y + this._highlightRect.height
+      x: a.x + this._contentRect.width,
+      y: a.y + this._contentRect.height
     };
 
     // Get midpoint of diagonal line.
@@ -610,17 +632,19 @@ Highlighter.prototype = {
   },
 
   /**
-   * Is this.node highlightable?
+   * Is the specified node highlightable?
    *
+   * @param nsIDOMNode aNode
+   *        the DOM element in question
    * @returns boolean
    *          True if the node is highlightable or false otherwise.
    */
-  isNodeHighlightable: function Highlighter_isNodeHighlightable()
+  isNodeHighlightable: function Highlighter_isNodeHighlightable(aNode)
   {
-    if (!this.node || this.node.nodeType != this.node.ELEMENT_NODE) {
+    if (aNode.nodeType != aNode.ELEMENT_NODE) {
       return false;
     }
-    let nodeName = this.node.nodeName.toLowerCase();
+    let nodeName = aNode.nodeName.toLowerCase();
     return !INSPECTOR_INVISIBLE_ELEMENTS[nodeName];
   },
 
@@ -863,8 +887,7 @@ InspectorUI.prototype = {
   initTools: function IUI_initTools()
   {
     // Style inspector
-    // XXX bug 689164, remove /false &&/ from below when bug 689160 fixed.
-    if (false && Services.prefs.getBoolPref("devtools.styleinspector.enabled") &&
+    if (Services.prefs.getBoolPref("devtools.styleinspector.enabled") &&
         !this.toolRegistered("styleinspector")) {
       let stylePanel = StyleInspector.createPanel(true);
       this.registerTool({
@@ -966,6 +989,7 @@ InspectorUI.prototype = {
     }
 
     this.stopInspecting();
+    this.browser.removeEventListener("keypress", this, true);
 
     this.saveToolState(this.winID);
     this.toolsDo(function IUI_toolsHide(aTool) {
@@ -973,6 +997,9 @@ InspectorUI.prototype = {
     }.bind(this));
 
     if (this.highlighter) {
+      this.highlighter.highlighterContainer.removeEventListener("keypress",
+                                                                this,
+                                                                true);
       this.highlighter.destroy();
       this.highlighter = null;
     }
@@ -1003,10 +1030,16 @@ InspectorUI.prototype = {
       this.treePanel.closeEditor();
 
     this.inspectToolbutton.checked = true;
-    this.attachPageListeners();
+    // Attach event listeners to content window and child windows to enable
+    // highlighting and click to stop inspection.
+    this.browser.addEventListener("keypress", this, true);
+    this.highlighter.highlighterContainer.addEventListener("keypress", this, true);
+    this.highlighter.attachInspectListeners();
+
     this.inspecting = true;
     this.toolsDim(true);
     this.highlighter.veilContainer.removeAttribute("locked");
+    this.highlighter.nodeInfo.container.removeAttribute("locked");
   },
 
   /**
@@ -1022,7 +1055,12 @@ InspectorUI.prototype = {
     }
 
     this.inspectToolbutton.checked = false;
-    this.detachPageListeners();
+    // Detach event listeners from content window and child windows to disable
+    // highlighting. We still want to be notified if the user presses "ESCAPE"
+    // to unlock the node, so we don't remove the "keypress" event until
+    // the highlighter is removed.
+    this.highlighter.detachInspectListeners();
+
     this.inspecting = false;
     this.toolsDim(false);
     if (this.highlighter.node) {
@@ -1031,6 +1069,7 @@ InspectorUI.prototype = {
       this.select(null, true, true);
     }
     this.highlighter.veilContainer.setAttribute("locked", true);
+    this.highlighter.nodeInfo.container.setAttribute("locked", true);
   },
 
   /**
@@ -1141,35 +1180,76 @@ InspectorUI.prototype = {
         switch (event.keyCode) {
           case this.chromeWin.KeyEvent.DOM_VK_RETURN:
           case this.chromeWin.KeyEvent.DOM_VK_ESCAPE:
-            if (this.inspecting) {
-              this.stopInspecting();
-              event.preventDefault();
-              event.stopPropagation();
+            this.toggleInspection();
+            event.preventDefault();
+            event.stopPropagation();
+            break;
+          case this.chromeWin.KeyEvent.DOM_VK_LEFT:
+            let node;
+            if (this.selection) {
+              node = this.selection.parentNode;
+            } else {
+              node = this.defaultSelection;
             }
+            if (node && this.highlighter.isNodeHighlightable(node)) {
+              this.inspectNode(node, true);
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            break;
+          case this.chromeWin.KeyEvent.DOM_VK_RIGHT:
+            if (this.selection) {
+              // Find the first child that is highlightable.
+              for (let i = 0; i < this.selection.childNodes.length; i++) {
+                node = this.selection.childNodes[i];
+                if (node && this.highlighter.isNodeHighlightable(node)) {
+                  break;
+                }
+              }
+            } else {
+              node = this.defaultSelection;
+            }
+            if (node && this.highlighter.isNodeHighlightable(node)) {
+              this.inspectNode(node, true);
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            break;
+          case this.chromeWin.KeyEvent.DOM_VK_UP:
+            if (this.selection) {
+              // Find a previous sibling that is highlightable.
+              node = this.selection.previousSibling;
+              while (node && !this.highlighter.isNodeHighlightable(node)) {
+                node = node.previousSibling;
+              }
+            } else {
+              node = this.defaultSelection;
+            }
+            if (node && this.highlighter.isNodeHighlightable(node)) {
+              this.inspectNode(node, true);
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            break;
+          case this.chromeWin.KeyEvent.DOM_VK_DOWN:
+            if (this.selection) {
+              // Find a next sibling that is highlightable.
+              node = this.selection.nextSibling;
+              while (node && !this.highlighter.isNodeHighlightable(node)) {
+                node = node.nextSibling;
+              }
+            } else {
+              node = this.defaultSelection;
+            }
+            if (node && this.highlighter.isNodeHighlightable(node)) {
+              this.inspectNode(node, true);
+            }
+            event.preventDefault();
+            event.stopPropagation();
             break;
         }
         break;
     }
-  },
-
-  /**
-   * Attach event listeners to content window and child windows to enable
-   * highlighting and click to stop inspection.
-   */
-  attachPageListeners: function IUI_attachPageListeners()
-  {
-    this.browser.addEventListener("keypress", this, true);
-    this.highlighter.attachInspectListeners();
-  },
-
-  /**
-   * Detach event listeners from content window and child windows
-   * to disable highlighting.
-   */
-  detachPageListeners: function IUI_detachPageListeners()
-  {
-    this.browser.removeEventListener("keypress", this, true);
-    this.highlighter.detachInspectListeners();
   },
 
   /////////////////////////////////////////////////////////////////////////
@@ -1181,11 +1261,13 @@ InspectorUI.prototype = {
    *
    * @param aNode
    *        the element in the document to inspect
+   * @param aScroll
+   *        force scroll?
    */
-  inspectNode: function IUI_inspectNode(aNode)
+  inspectNode: function IUI_inspectNode(aNode, aScroll)
   {
     this.select(aNode, true, true);
-    this.highlighter.highlightNode(aNode);
+    this.highlighter.highlightNode(aNode, { scroll: aScroll });
   },
 
   /**

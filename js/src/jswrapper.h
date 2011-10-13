@@ -158,6 +158,28 @@ class JS_FRIEND_API(CrossCompartmentWrapper) : public Wrapper
 };
 
 /*
+ * Base class for security wrappers. A security wrapper is potentially hiding
+ * all or part of some wrapped object thus SecurityWrapper defaults to denying
+ * access to the wrappee. This is the opposite of Wrapper which tries to be
+ * completely transparent.
+ *
+ * NB: Currently, only a few ProxyHandler operations are overridden to deny
+ * access, relying on derived SecurityWrapper to block access when necessary.
+ */
+template <class Base>
+class JS_FRIEND_API(SecurityWrapper) : public Base
+{
+  public:
+    SecurityWrapper(uintN flags);
+
+    virtual bool nativeCall(JSContext *cx, JSObject *wrapper, Class *clasp, Native native, CallArgs args);
+    virtual bool objectClassIs(JSObject *obj, ESClassValue classValue, JSContext *cx);
+};
+
+typedef SecurityWrapper<Wrapper> SameCompartmentSecurityWrapper;
+typedef SecurityWrapper<CrossCompartmentWrapper> CrossCompartmentSecurityWrapper;
+
+/*
  * A hacky class that lets a friend force a fake frame. We must already be
  * in the compartment of |target| when we enter the forced frame.
  */
@@ -175,51 +197,14 @@ class JS_FRIEND_API(ForceFrame)
     bool enter();
 };
 
-class AutoCompartment
-{
-  public:
-    JSContext * const context;
-    JSCompartment * const origin;
-    JSObject * const target;
-    JSCompartment * const destination;
-  private:
-    Maybe<DummyFrameGuard> frame;
-    bool entered;
-
-  public:
-    AutoCompartment(JSContext *cx, JSObject *target);
-    ~AutoCompartment();
-
-    bool enter();
-    void leave();
-
-  private:
-    // Prohibit copying.
-    AutoCompartment(const AutoCompartment &);
-    AutoCompartment & operator=(const AutoCompartment &);
-};
-
-/*
- * Use this to change the behavior of an AutoCompartment slightly on error. If
- * the exception happens to be an Error object, copy it to the origin compartment
- * instead of wrapping it.
- */
-class ErrorCopier
-{
-    AutoCompartment &ac;
-    JSObject *scope;
-
-  public:
-    ErrorCopier(AutoCompartment &ac, JSObject *scope) : ac(ac), scope(scope) {
-        JS_ASSERT(scope->compartment() == ac.origin);
-    }
-    ~ErrorCopier();
-};
-
 extern JSObject *
 TransparentObjectWrapper(JSContext *cx, JSObject *obj, JSObject *wrappedProto, JSObject *parent,
                          uintN flags);
 
-}
+JS_FRIEND_API(bool) IsWrapper(const JSObject *obj);
+JS_FRIEND_API(JSObject *) UnwrapObject(JSObject *obj, uintN *flagsp = NULL);
+bool IsCrossCompartmentWrapper(const JSObject *obj);
+
+} /* namespace js */
 
 #endif

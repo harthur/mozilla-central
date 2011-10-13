@@ -48,6 +48,7 @@
 #include "jspubtd.h"
 #include "jsatom.h"
 #include "jsscan.h"
+#include "jsscript.h"
 #include "jswin.h"
 
 #include "frontend/ParseMaps.h"
@@ -1076,7 +1077,7 @@ struct JSFunctionBoxQueue {
       : vector(NULL), head(0), tail(0), lengthMask(0) { }
 
     bool init(uint32 count) {
-        lengthMask = JS_BITMASK(JS_CeilingLog2(count));
+        lengthMask = JS_BITMASK(JS_CEILING_LOG2W(count));
         vector = (JSFunctionBox **) js::OffTheBooks::malloc_(sizeof(JSFunctionBox) * length());
         return !!vector;
     }

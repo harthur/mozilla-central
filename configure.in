@@ -371,6 +371,7 @@ case "$target" in
     AR="$android_toolchain"/bin/"$android_tool_prefix"-ar
     RANLIB="$android_toolchain"/bin/"$android_tool_prefix"-ranlib
     STRIP="$android_toolchain"/bin/"$android_tool_prefix"-strip
+    OBJCOPY="$android_toolchain"/bin/"$android_tool_prefix"-objcopy
 
     case "${target_cpu}" in
     arm*)
@@ -443,6 +444,9 @@ case "$target" in
     MOZ_CHROME_FILE_FORMAT=omni
     ZLIB_DIR=yes
     ;;
+*-linux*)
+    AC_PATH_PROG(OBJCOPY,objcopy)
+    ;;
 esac
 
 AC_SUBST(ANDROID_NDK)
@@ -451,6 +455,7 @@ AC_SUBST(ANDROID_PLATFORM)
 AC_SUBST(ANDROID_SDK)
 AC_SUBST(ANDROID_PLATFORM_TOOLS)
 AC_SUBST(ANDROID_PACKAGE_NAME)
+AC_SUBST(OBJCOPY)
 
 dnl ========================================================
 dnl Checks for compilers.
@@ -738,6 +743,10 @@ case "$target" in
             AC_DEFINE(_CRT_NONSTDC_NO_WARNINGS)
         elif test "$_CC_MAJOR_VERSION" = "16"; then
             _CC_SUITE=10
+            AC_DEFINE(_CRT_SECURE_NO_WARNINGS)
+            AC_DEFINE(_CRT_NONSTDC_NO_WARNINGS)
+        elif test "$_CC_MAJOR_VERSION" = "17"; then
+            _CC_SUITE=11
             AC_DEFINE(_CRT_SECURE_NO_WARNINGS)
             AC_DEFINE(_CRT_NONSTDC_NO_WARNINGS)
         else
@@ -2027,6 +2036,10 @@ case "$target" in
     MKCSHLIB='$(CC) $(CFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -o $@'
     MOZ_OPTIMIZE_FLAGS="-O3"
     _PEDANTIC=
+    # Due to performance regressions, statically disable jemalloc on 10.5. See bug 414946.
+    if test "$HAVE_64BIT_OS"; then
+        MOZ_MEMORY=1
+    fi
     CFLAGS="$CFLAGS -fno-common"
     CXXFLAGS="$CXXFLAGS -fno-common"
     DLL_SUFFIX=".dylib"
@@ -6859,7 +6872,7 @@ if test "$GNU_CC" -a "$GCC_USE_GNU_LD" -a -n "$MOZ_DEBUG_FLAGS"; then
             fi
         else
              dnl We really don't expect to get here, but just in case
-             AC_ERROR([couldn't compile a simple C file])
+             GC_SECTIONS_BREAKS_DEBUG_RANGES="no, but it's broken in some other way"
         fi
         rm -rf conftest*])
     if test "$GC_SECTIONS_BREAKS_DEBUG_RANGES" = no; then
@@ -7111,17 +7124,6 @@ MOZ_ARG_ENABLE_BOOL(tracevis,
     MOZ_TRACEVIS= )
 if test -n "$MOZ_TRACEVIS"; then
     AC_DEFINE(MOZ_TRACEVIS)
-fi
-
-dnl ========================================================
-dnl = Use GCTimer
-dnl ========================================================
-MOZ_ARG_ENABLE_BOOL(gctimer,
-[  --enable-gctimer        Enable GC timer (default=no)],
-    MOZ_GCTIMER=1,
-    MOZ_GCTIMER= )
-if test -n "$MOZ_GCTIMER"; then
-    AC_DEFINE(MOZ_GCTIMER)
 fi
 
 dnl ========================================================
@@ -7390,6 +7392,23 @@ dnl ========================================================
 if test -z "$SKIP_LIBRARY_CHECKS"; then
     MOZ_CHECK_HEADER(unwind.h, AC_CHECK_FUNCS(_Unwind_Backtrace))
 fi
+
+dnl ========================================================
+dnl JIT observers
+dnl ========================================================
+
+MOZ_ARG_WITH_STRING(jitreport-granularity,
+[  --jitreport-granularity=N
+                           Default granularity at which to report JIT code
+                           to external tools
+                             0 - no info
+                             1 - code ranges for whole functions only
+                             2 - per-line information
+                             3 - per-op information],
+  JITREPORT_GRANULARITY=$withval,
+  JITREPORT_GRANULARITY=3)
+
+AC_DEFINE_UNQUOTED(JS_DEFAULT_JITREPORT_GRANULARITY, $JITREPORT_GRANULARITY)
 
 dnl ========================================================
 dnl =
@@ -8780,12 +8799,13 @@ if test -z "$MOZ_NATIVE_NSPR"; then
     ac_configure_args="$_SUBDIR_CONFIG_ARGS --with-dist-prefix=$MOZ_BUILD_ROOT/dist --with-mozilla"
     if test -z "$MOZ_DEBUG"; then
         ac_configure_args="$ac_configure_args --disable-debug"
+    else
+        ac_configure_args="$ac_configure_args --enable-debug"
     fi
     if test "$MOZ_OPTIMIZE" = "1"; then
         ac_configure_args="$ac_configure_args --enable-optimize"
-    fi
-    if test "$OS_ARCH" = "WINNT" -a "$NS_TRACE_MALLOC"; then
-       ac_configure_args="$ac_configure_args --enable-debug --disable-optimize"
+    else
+        ac_configure_args="$ac_configure_args --disable-optimize"
     fi
     if test -n "$HAVE_64BIT_OS"; then
         ac_configure_args="$ac_configure_args --enable-64bit"
