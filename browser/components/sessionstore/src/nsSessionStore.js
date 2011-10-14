@@ -134,12 +134,16 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 // debug.js adds NS_ASSERT. cf. bug 669196
 Cu.import("resource://gre/modules/debug.js");
-Cu.import("resource:///modules/devtools/scratchpad-manager.jsm");
 
 XPCOMUtils.defineLazyGetter(this, "NetUtil", function() {
   Cu.import("resource://gre/modules/NetUtil.jsm");
   return NetUtil;
 });
+
+XPCOMUtils.defineLazyGetter(this, "ScratchpadManager", function() {
+  Cu.import("resource:///modules/devtools/scratchpad-manager.jsm");
+  return ScratchpadManager;
+})
 
 XPCOMUtils.defineLazyServiceGetter(this, "CookieSvc",
   "@mozilla.org/cookiemanager;1", "nsICookieManager2");
@@ -2482,7 +2486,7 @@ SessionStoreService.prototype = {
     if (ix != -1 && total[ix] && total[ix].sizemode == "minimized")
       ix = -1;
 
-    // save open scratchpad window states too
+    // save open Scratchpad window states too
     var scratchpads = ScratchpadManager.getSessionState();
 
     return {
@@ -2696,6 +2700,12 @@ SessionStoreService.prototype = {
     
     this.restoreHistoryPrecursor(aWindow, tabs, winData.tabs,
       (aOverwriteTabs ? (parseInt(winData.selected) || 1) : 0), 0, 0);
+
+    if (aState.scratchpads) {
+      aWindow.setTimeout(function() {
+        ScratchpadManager.restoreSession(aState.scratchpads);
+      });
+    }
 
     // This will force the keypress listener that Panorama has to attach if it
     // isn't already. This will be the case if tab view wasn't entered or there

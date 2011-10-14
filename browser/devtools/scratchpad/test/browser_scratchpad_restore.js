@@ -24,8 +24,6 @@ function asyncMap(items, iterator, callback)
 
 function test()
 {
-  ScratchpadManager.init();
-
   waitForExplicitFinish();
   testRestore();
 }
@@ -54,35 +52,36 @@ function testRestore()
     win.addEventListener("load", function() {
       done(win);
     })
-  },
-  function(wins) {
+  }, function(wins) {
     // Then save the windows to session store
-    ScratchpadManager.saveOpenWindows(function() {
-      // Then close them
-      wins.forEach(function(win) {
-        win.close(); 
-      });
+    ScratchpadManager.saveOpenWindows();
+    
+    // Then get their states
+    var session = ScratchpadManager.getSessionState();
 
-      // Then restore them
-      ScratchpadManager.restoreSession(function(restoredWins) {
-        is(restoredWins.length, 3, "Three scratchad windows restored");
+    // Then close them
+    wins.forEach(function(win) {
+      win.close(); 
+    });
 
-        asyncMap(restoredWins, function(restoredWin, done) {
-          restoredWin.addEventListener("load", function() {
-            let state = restoredWin.Scratchpad.getState();
-            done(state);
-            restoredWin.close();
-          });
-        }, 
-        function(restoredStates) {
-          // Then make sure they were restored with the right states
-          ok(statesMatch(states, restoredStates),
-            "All scratchpad window states restored correctly");
-            
-          // Yay, we're done!
-          finish();
-        });
+    // Then restore them
+    let restoredWins = ScratchpadManager.restoreSession(session);
+    
+    is(restoredWins.length, 3, "Three scratchad windows restored");
+
+    asyncMap(restoredWins, function(restoredWin, done) {
+      restoredWin.addEventListener("load", function() {
+        let state = restoredWin.Scratchpad.getState();
+        done(state);
+        restoredWin.close();
       });
+    }, function(restoredStates) {
+      // Then make sure they were restored with the right states
+      ok(statesMatch(states, restoredStates),
+        "All scratchpad window states restored correctly");
+        
+      // Yay, we're done!
+      finish();
     });
   });
 }

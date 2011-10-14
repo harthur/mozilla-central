@@ -51,6 +51,7 @@ DIRS = \
   webconsole \
   sourceeditor \
   styleinspector \
+  scratchpad \
   shared \
   $(NULL)
 

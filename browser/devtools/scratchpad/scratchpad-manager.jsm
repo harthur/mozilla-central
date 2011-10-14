@@ -55,22 +55,17 @@ Cu.import("resource://gre/modules/Services.jsm");
  * the life of the browser.
  */
 var ScratchpadManager = {
+   
+  _scratchpads: [],
+
   /**
-   * Get the states of all open scratchpad windows
+   * Get the saved states of open scratchpad windows. Called by
+   * session restore.
    */
   getSessionState: function SPM_getSessionState()
   {
-    let session = [];
-
-    let enumerator = Services.wm.getEnumerator("devtools:scratchpad");
-    while (enumerator.hasMoreElements()) {
-      let win = enumerator.getNext();
-      if (!win.closed) {
-        session.push(win.Scratchpad.getState());
-      }
-    }
-    return session;
-  },
+    return this._scratchpads;
+  }, 
   
   /**
    * Restore scratchpad windows from the scratchpad session store file.
@@ -82,11 +77,28 @@ var ScratchpadManager = {
    * @param function aCallback
    *        Optional. Function called when session has been restored
    */
-  restoreSession: function SPM_restoreSession(aSession, aCallback)
+  restoreSession: function SPM_restoreSession(aSession)
   {
-    states.forEach(function(state) {
-      this.openScratchpad(state)
+    let wins = [];
+    aSession.forEach(function(state) {
+      let win = this.openScratchpad(state);
+      wins.push(win);
     }, this);
+
+    return wins;
+  },
+  
+  /**
+   * Iterate through open scratchpad windows and save their states.
+   */
+  saveOpenWindows: function SPM_saveOpenWindows() {
+    let enumerator = Services.wm.getEnumerator("devtools:scratchpad");
+    while (enumerator.hasMoreElements()) {
+      let win = enumerator.getNext();
+      if (!win.closed) {
+        this._scratchpads.push(win.Scratchpad.getState());
+      }
+    }
   },
 
   /**
@@ -107,7 +119,41 @@ var ScratchpadManager = {
     }
     let win = Services.ww.openWindow(null, SCRATCHPAD_WINDOW_URL, "_blank",
                                      SCRATCHPAD_WINDOW_FEATURES, params);
+    // Only add shutdown observer if we've opened a scratchpad window
+    ShutdownObserver.init();
     
     return win;
+  }
+};
+
+
+/**
+ * The ShutdownObserver listens for app shutdown and saves the current state
+ * of the scratchpads for session restore.
+ */
+var ShutdownObserver = {
+  _initialized: false,
+
+  init: function SDO_init()
+  {
+    if (this._initialized) {
+      return;
+    }
+
+    Services.obs.addObserver(this, "quit-application-granted", false);
+    this._initialized = true;
+  },
+
+  observe: function SDO_observe(aMessage, aTopic, aData)
+  {
+    if (aTopic == "quit-application-granted") {
+      ScratchpadManager.saveOpenWindows();
+      this.uninit();
+    }
+  },
+
+  uninit: function SDO_uninit()
+  {
+    Services.obs.removeObserver(this, "quit-application-granted");
   }
 };
