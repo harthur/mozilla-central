@@ -140,6 +140,11 @@ XPCOMUtils.defineLazyGetter(this, "NetUtil", function() {
   return NetUtil;
 });
 
+XPCOMUtils.defineLazyGetter(this, "ScratchpadManager", function() {
+  Cu.import("resource:///modules/devtools/scratchpad-manager.jsm");
+  return ScratchpadManager;
+});
+
 XPCOMUtils.defineLazyServiceGetter(this, "CookieSvc",
   "@mozilla.org/cookiemanager;1", "nsICookieManager2");
 
@@ -2481,7 +2486,15 @@ SessionStoreService.prototype = {
     if (ix != -1 && total[ix] && total[ix].sizemode == "minimized")
       ix = -1;
 
-    return { windows: total, selectedWindow: ix + 1, _closedWindows: lastClosedWindowsCopy };
+    // save open Scratchpad window states too
+    var scratchpads = ScratchpadManager.getSessionState();
+
+    return {
+      windows: total,
+      selectedWindow: ix + 1,
+      _closedWindows: lastClosedWindowsCopy,
+      scratchpads: scratchpads
+    };
   },
 
   /**
@@ -2687,6 +2700,10 @@ SessionStoreService.prototype = {
     
     this.restoreHistoryPrecursor(aWindow, tabs, winData.tabs,
       (aOverwriteTabs ? (parseInt(winData.selected) || 1) : 0), 0, 0);
+      
+    if (aState.scratchpads) {
+      ScratchpadManager.restoreSession(aState.scratchpads);
+    }
 
     // This will force the keypress listener that Panorama has to attach if it
     // isn't already. This will be the case if tab view wasn't entered or there

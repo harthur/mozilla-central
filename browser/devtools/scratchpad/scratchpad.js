@@ -59,12 +59,12 @@ Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/NetUtil.jsm");
 Cu.import("resource:///modules/PropertyPanel.jsm");
 Cu.import("resource:///modules/source-editor.jsm");
+Cu.import("resource:///modules/devtools/scratchpad-manager.jsm");
+
 
 const SCRATCHPAD_CONTEXT_CONTENT = 1;
 const SCRATCHPAD_CONTEXT_BROWSER = 2;
-const SCRATCHPAD_WINDOW_URL = "chrome://browser/content/scratchpad.xul";
 const SCRATCHPAD_L10N = "chrome://browser/locale/scratchpad.properties";
-const SCRATCHPAD_WINDOW_FEATURES = "chrome,titlebar,toolbar,centerscreen,resizable,dialog=no";
 const DEVTOOLS_CHROME_ENABLED = "devtools.chrome.enabled";
 
 /**
@@ -84,10 +84,10 @@ var Scratchpad = {
   executionContext: SCRATCHPAD_CONTEXT_CONTENT,
 
   /**
-   * Retrieve the xul:notificationbox DOM element. It notifies the user when
-   * the current code execution context is SCRATCHPAD_CONTEXT_BROWSER.
+   * Retrieve the xul:statusbarpanel DOM element. The status bar tells the
+   * current code execution context.
    */
-  get notificationBox() document.getElementById("scratchpad-notificationbox"),
+  get statusbarStatus() document.getElementById("scratchpad-status"),
 
   /**
    * Get the selected text from the editor.
@@ -130,6 +130,55 @@ var Scratchpad = {
   setText: function SP_setText(aText, aStart, aEnd)
   {
     this.editor.setText(aText, aStart, aEnd);
+  },
+  
+  /**
+   * Set the filename in the scratchpad UI and object
+   *
+   * @param string aFilename
+   *        The new filename
+   */
+  setFilename: function SP_setFilename(aFilename)
+  {
+    document.title = this.filename = aFilename;
+  },
+ 
+  /**
+   * Get the current state of the scratchpad. Called by the
+   * Scratchpad Manager for session storing.
+   *
+   * @return object
+   *        An object with 3 properties: filename, text, and
+   *        executionContext.
+   */ 
+  getState: function SP_getState()
+  {
+    return {
+      filename: this.filename,
+      text: this.getText(),
+      executionContext: this.executionContext
+    };
+  },
+
+  /**
+   * Set the filename and execution context using the given state. Called
+   * when scratchpad is being restored from a previous session.
+   *
+   * @param object aState
+   *        An object with filename and executionContext properties.
+   */
+  setState: function SP_getState(aState)
+  {
+    if (aState.filename) {
+      this.setFilename(aState.filename);
+    }
+    
+    if (aState.executionContext == SCRATCHPAD_CONTEXT_BROWSER) {
+      this.setBrowserContext();
+    }
+    else {
+      this.setContentContext();
+    }
   },
 
   /**
@@ -442,8 +491,7 @@ var Scratchpad = {
    */
   openScratchpad: function SP_openScratchpad()
   {
-    Services.ww.openWindow(null, SCRATCHPAD_WINDOW_URL, "_blank",
-                           SCRATCHPAD_WINDOW_FEATURES, null);
+    ScratchpadManager.openScratchpad();
   },
 
   /**
@@ -541,7 +589,7 @@ var Scratchpad = {
             Ci.nsIFilePicker.modeOpen);
     fp.defaultString = "";
     if (fp.show() != Ci.nsIFilePicker.returnCancel) {
-      document.title = this.filename = fp.file.path;
+      this.setFilename(fp.file.path);
       this.importFromFile(fp.file);
     }
   },
@@ -599,15 +647,11 @@ var Scratchpad = {
    */
   setContentContext: function SP_setContentContext()
   {
-    if (this.executionContext == SCRATCHPAD_CONTEXT_CONTENT) {
-      return;
-    }
-
     let content = document.getElementById("sp-menu-content");
     document.getElementById("sp-menu-browser").removeAttribute("checked");
     content.setAttribute("checked", true);
     this.executionContext = SCRATCHPAD_CONTEXT_CONTENT;
-    this.notificationBox.removeAllNotifications(false);
+    this.statusbarStatus.label = content.getAttribute("label");
     this.resetContext();
   },
 
@@ -616,20 +660,11 @@ var Scratchpad = {
    */
   setBrowserContext: function SP_setBrowserContext()
   {
-    if (this.executionContext == SCRATCHPAD_CONTEXT_BROWSER) {
-      return;
-    }
-
     let browser = document.getElementById("sp-menu-browser");
     document.getElementById("sp-menu-content").removeAttribute("checked");
     browser.setAttribute("checked", true);
     this.executionContext = SCRATCHPAD_CONTEXT_BROWSER;
-    this.notificationBox.appendNotification(
-      this.strings.GetStringFromName("browserContext.notification"),
-      SCRATCHPAD_CONTEXT_BROWSER,
-      null,
-      this.notificationBox.PRIORITY_WARNING_HIGH,
-      null);
+    this.statusbarStatus.label = browser.getAttribute("label");
     this.resetContext();
   },
 
@@ -670,14 +705,25 @@ var Scratchpad = {
       return;
     }
 
+    let chromeContextMenu = document.getElementById("sp-menu-browser");
+    let errorConsoleMenu = document.getElementById("sp-menu-errorConsole");
+    let errorConsoleCommand = document.getElementById("sp-cmd-errorConsole");
+    let chromeContextCommand = document.getElementById("sp-cmd-browserContext");
+
     let chrome = Services.prefs.getBoolPref(DEVTOOLS_CHROME_ENABLED);
     if (chrome) {
-      let environmentMenu = document.getElementById("sp-environment-menu");
-      let errorConsoleCommand = document.getElementById("sp-cmd-errorConsole");
-      let chromeContextCommand = document.getElementById("sp-cmd-browserContext");
-      environmentMenu.removeAttribute("hidden");
-      chromeContextCommand.removeAttribute("disabled");
+      chromeContextMenu.removeAttribute("hidden");
+      errorConsoleMenu.removeAttribute("hidden");
       errorConsoleCommand.removeAttribute("disabled");
+      chromeContextCommand.removeAttribute("disabled");
+    }
+
+    let initialText = this.strings.GetStringFromName("scratchpadIntro");
+    if ("arguments" in window && 
+         window.arguments[0] instanceof Components.interfaces.nsIDialogParamBlock) {
+      let state = JSON.parse(window.arguments[0].GetString(0));
+      this.setState(state);
+      initialText = state.text;
     }
 
     this.editor = new SourceEditor();
@@ -685,7 +731,7 @@ var Scratchpad = {
     let config = {
       mode: SourceEditor.MODES.JAVASCRIPT,
       showLineNumbers: true,
-      placeholderText: this.strings.GetStringFromName("scratchpadIntro"),
+      placeholderText: initialText,
     };
 
     let editorPlaceholder = document.getElementById("scratchpad-editor");
